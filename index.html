@@ -3,8 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-
-<title>Gold Tile Finder (Optimal Solver with Reset)</title>
+<title>Gold Tile Finder (Panel Next to Grid)</title>
 <style>
   body {
     font-family: Arial, sans-serif;
@@ -18,6 +17,7 @@
     align-items: center;
     margin: 30px auto;
     max-width: 900px;
+    position: relative;
   }
 
   h1 {
@@ -25,11 +25,8 @@
   }
 
   #container {
-    display: flex;
-    flex-direction: row;
-    gap: 20px;
-    justify-content: center;
-    margin-bottom: 20px;
+    display: inline-block;
+    position: relative;
   }
 
   #board {
@@ -57,7 +54,7 @@
     background: #eee;
   }
 
-  .gold {
+  .gold-tile {
     background: gold !important;
   }
 
@@ -76,13 +73,24 @@
   #info {
     margin-top: 10px;
     font-size: 16px;
+    text-align: center;
   }
 
   #panel {
-    min-width: 200px;
+    position: absolute;
+    top: 0;
+    left: 100%;
+    margin-left: 20px;
+    width: 250px;
     border: 1px solid #ccc;
     padding: 10px;
     background: #fff;
+    box-shadow: 0 0 10px rgba(0,0,0,0.2);
+    z-index: 10;
+  }
+
+  #panel.hidden {
+    display: none;
   }
 
   #panel h2 {
@@ -112,39 +120,36 @@
     font-size: 14px;
     margin-top: 20px;
     cursor: pointer;
+    display: block;
+    margin: 20px auto 0 auto;
   }
 
-  .hidden {
-    display: none;
-  }
 </style>
 </head>
 <body>
 <div class="main-container">
-<h1>Find the Gold Tiles</h1>
-<div id="container">
-  <div>
+  <h1>Find the Gold Tiles</h1>
+  <div id="container">
     <div id="board"></div>
     <div id="info"></div>
-  </div>
-  <div id="panel" class="hidden">
-    <h2>Tile Information</h2>
-    <p id="panel-tile">Row: N/A, Col: N/A</p>
-    <div class="radio-group">
-      <label>Is it Gold?</label>
-      <label><input type="radio" name="value" value="gold"> Gold</label>
-      <label><input type="radio" name="value" value="common" checked> Common</label>
+    <button id="reset-btn">Reset</button>
+    <div id="panel" class="hidden">
+      <h2>Tile Information</h2>
+      <p id="panel-tile">Row: N/A, Col: N/A</p>
+      <div class="radio-group">
+        <label>Is it Gold?</label>
+        <label><input type="radio" name="value" value="gold"> Gold</label>
+        <label><input type="radio" name="value" value="common" checked> Common</label>
+      </div>
+      <div class="radio-group">
+        <label>Neighbor Hint:</label>
+        <label><input type="radio" name="hint" value="gold"> Gold (Gold neighbor)</label>
+        <label><input type="radio" name="hint" value="common" checked> Common (No gold neighbor)</label>
+      </div>
+      <button id="save-btn">Save</button>
+      <button id="cancel-btn">Cancel</button>
     </div>
-    <div class="radio-group">
-      <label>Neighbor Hint:</label>
-      <label><input type="radio" name="hint" value="special"> Special (Gold neighbor)</label>
-      <label><input type="radio" name="hint" value="common" checked> Common (No gold neighbor)</label>
-    </div>
-    <button id="save-btn">Save</button>
-    <button id="cancel-btn">Cancel</button>
   </div>
-</div>
-<button id="reset-btn">Reset</button>
 </div>
 
 <script>
@@ -162,7 +167,7 @@ function initializeTileData() {
       tileData[r][c] = {
         opened: false,
         value: 'unknown',  // 'gold' or 'common'
-        hint: 'unknown'    // 'special' or 'common'
+        hint: 'unknown'    // 'gold' or 'common'
       };
     }
   }
@@ -197,7 +202,7 @@ resetBtn.addEventListener('click', resetGame);
 
 let currentEdit = null;
 
-// -------------------- Classes and Logic for Solver (from previous implementation) --------------------
+// -------------------- Classes and Logic for Solver (Adapted) --------------------
 const Category = { SPECIAL: 'gold', COMMON: 'common' };
 
 class Tile {
@@ -206,7 +211,7 @@ class Tile {
     this.col = col;
     this.opened = false;
     this.category = Category.COMMON;
-    this.neighborHint = "Common"; // "Special" or "Common"
+    this.neighborHint = "Common"; // "Gold" or "Common"
   }
 }
 
@@ -232,7 +237,7 @@ class Grid {
         } else {
           t.category = Category.COMMON;
         }
-        t.neighborHint = (d.hint === 'special') ? "Special" : "Common";
+        t.neighborHint = (d.hint === 'gold') ? "Gold" : "Common";
         this.tiles.push(t);
         this.tilesList.push(t);
       }
@@ -321,7 +326,7 @@ class BruteforceProbabilitySolver {
 
   narrowDownPossibleConfigurations(openTile) {
     let isGold = (openTile.category === Category.SPECIAL);
-    let isGoldHint = (openTile.neighborHint === "Special");
+    let isGoldHint = (openTile.neighborHint === "Gold");
     let tileIndex = this.getTileIndex(openTile);
 
     let i = 0;
@@ -457,7 +462,7 @@ function openPanel(r, c) {
 
   const valGold = panel.querySelector('input[name="value"][value="gold"]');
   const valCommon = panel.querySelector('input[name="value"][value="common"]');
-  const hintSpecial = panel.querySelector('input[name="hint"][value="special"]');
+  const hintGold = panel.querySelector('input[name="hint"][value="gold"]');
   const hintCommon = panel.querySelector('input[name="hint"][value="common"]');
 
   const d = tileData[r][c];
@@ -467,8 +472,8 @@ function openPanel(r, c) {
     valCommon.checked = true;
   }
 
-  if (d.hint === 'special') {
-    hintSpecial.checked = true;
+  if (d.hint === 'gold') {
+    hintGold.checked = true;
   } else {
     hintCommon.checked = true;
   }
@@ -502,19 +507,19 @@ function updateTileUI(r,c) {
   tileEl.classList.add('opened');
   if (tileData[r][c].value === 'gold') {
     tileEl.textContent = 'G';
-    tileEl.classList.add('gold');
+    tileEl.classList.add('gold-tile');
   } else {
     tileEl.textContent = 'C';
-    tileEl.classList.remove('gold');
+    tileEl.classList.remove('gold-tile');
   }
 
   const oldIcon = tileEl.querySelector('.hint-icon');
   if (oldIcon) oldIcon.remove();
 
-  if (tileData[r][c].hint === 'special') {
+  if (tileData[r][c].hint === 'gold') {
     const icon = document.createElement('span');
     icon.className = 'hint-icon';
-    icon.textContent = '?';
+    icon.textContent = '★';
     tileEl.appendChild(icon);
   }
 }
