@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Gold Tile Finder (Panel Next to Grid)</title>
+<title>Snowman Solver</title>
 <style>
   body {
     font-family: Arial, sans-serif;
@@ -544,6 +544,14 @@ function runSolverAndSuggest() {
 
   let solver = new BruteforceProbabilitySolver(g);
   solver.updatePossibleConfigurations();
+
+  if (solver.possibleConfigurationsRemaining === 0) {
+    // No possible configuration matches given tiles
+    clearSuggestions();
+    infoEl.textContent = "No possible configuration matches the known opened tiles!";
+    return;
+  }
+
   solver.updateProbabilities();
   solver.updateRemainingConfigurationsAfterOpenEstimate();
 
