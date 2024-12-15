@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<title>Gold Tile Finder (Optimal Solver with Reset)</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    background: #f9f9f9;
+  }
+
+  .main-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 30px auto;
+    max-width: 900px;
+  }
+
+  h1 {
+    margin-bottom: 20px;
+  }
+
+  #container {
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+
+  #board {
+    display: grid;
+    grid-template-columns: repeat(6, 70px);
+    grid-gap: 5px;
+    margin-bottom: 20px;
+  }
+
+  .tile {
+    width: 70px;
+    height: 70px;
+    background: #ccc;
+    cursor: pointer;
+    position: relative;
+    user-select: none;
+    font-weight: bold;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .opened {
+    background: #eee;
+  }
+
+  .gold {
+    background: gold !important;
+  }
+
+  .suggested {
+    outline: 3px solid red;
+  }
+
+  .hint-icon {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    font-size: 16px;
+    color: red;
+  }
+
+  #info {
+    margin-top: 10px;
+    font-size: 16px;
+  }
+
+  #panel {
+    min-width: 200px;
+    border: 1px solid #ccc;
+    padding: 10px;
+    background: #fff;
+  }
+
+  #panel h2 {
+    font-size: 18px;
+    margin-top: 0;
+    margin-bottom: 10px;
+  }
+
+  .radio-group {
+    margin-bottom: 10px;
+    font-size: 14px;
+  }
+
+  .radio-group label {
+    display: block;
+    margin-bottom: 5px;
+  }
+
+  #panel button {
+    margin-right: 5px;
+    padding: 5px 10px;
+    font-size: 14px;
+  }
+
+  #reset-btn {
+    padding: 5px 10px;
+    font-size: 14px;
+    margin-top: 20px;
+    cursor: pointer;
+  }
+
+  .hidden {
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div class="main-container">
+<h1>Find the Gold Tiles</h1>
+<div id="container">
+  <div>
+    <div id="board"></div>
+    <div id="info"></div>
+  </div>
+  <div id="panel" class="hidden">
+    <h2>Tile Information</h2>
+    <p id="panel-tile">Row: N/A, Col: N/A</p>
+    <div class="radio-group">
+      <label>Is it Gold?</label>
+      <label><input type="radio" name="value" value="gold"> Gold</label>
+      <label><input type="radio" name="value" value="common" checked> Common</label>
+    </div>
+    <div class="radio-group">
+      <label>Neighbor Hint:</label>
+      <label><input type="radio" name="hint" value="special"> Special (Gold neighbor)</label>
+      <label><input type="radio" name="hint" value="common" checked> Common (No gold neighbor)</label>
+    </div>
+    <button id="save-btn">Save</button>
+    <button id="cancel-btn">Cancel</button>
+  </div>
+</div>
+<button id="reset-btn">Reset</button>
+</div>
+
+<script>
+// -------------------- Data Structures and Variables --------------------
+const rows = 5;
+const cols = 6;
+const totalGold = 4;
+
+let tileData = [];
+function initializeTileData() {
+  tileData = [];
+  for (let r = 0; r < rows; r++) {
+    tileData[r] = [];
+    for (let c = 0; c < cols; c++) {
+      tileData[r][c] = {
+        opened: false,
+        value: 'unknown',  // 'gold' or 'common'
+        hint: 'unknown'    // 'special' or 'common'
+      };
+    }
+  }
+}
+initializeTileData();
+
+const boardEl = document.getElementById('board');
+function buildBoardUI() {
+  boardEl.innerHTML = '';
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const div = document.createElement('div');
+      div.className = 'tile';
+      div.dataset.r = r;
+      div.dataset.c = c;
+      div.textContent = '?';
+      div.addEventListener('click', () => openPanel(r, c));
+      boardEl.appendChild(div);
+    }
+  }
+}
+buildBoardUI();
+
+const panel = document.getElementById('panel');
+const panelTile = document.getElementById('panel-tile');
+const saveBtn = document.getElementById('save-btn');
+const cancelBtn = document.getElementById('cancel-btn');
+const resetBtn = document.getElementById('reset-btn');
+saveBtn.addEventListener('click', saveTileInfo);
+cancelBtn.addEventListener('click', closePanelWithoutSaving);
+resetBtn.addEventListener('click', resetGame);
+
+let currentEdit = null;
+
+// -------------------- Classes and Logic for Solver (from previous implementation) --------------------
+const Category = { SPECIAL: 'gold', COMMON: 'common' };
+
+class Tile {
+  constructor(row, col) {
+    this.row = row;
+    this.col = col;
+    this.opened = false;
+    this.category = Category.COMMON;
+    this.neighborHint = "Common"; // "Special" or "Common"
+  }
+}
+
+class Grid {
+  constructor(rows, cols, golds) {
+    this.rows = rows;
+    this.cols = cols;
+    this.golds = golds;
+    this.tiles = [];
+    this.tilesList = [];
+    this.goldsFound = 0;
+  }
+  
+  initFromTileData(tileData) {
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        let t = new Tile(r, c);
+        const d = tileData[r][c];
+        t.opened = d.opened;
+        if (d.value === 'gold') {
+          t.category = Category.SPECIAL;
+          if (t.opened) this.goldsFound++;
+        } else {
+          t.category = Category.COMMON;
+        }
+        t.neighborHint = (d.hint === 'special') ? "Special" : "Common";
+        this.tiles.push(t);
+        this.tilesList.push(t);
+      }
+    }
+  }
+  
+  getNeighbors(tile) {
+    let neighbors = [];
+    let {row, col} = tile;
+    if (row > 0) neighbors.push(this.getTile(row-1, col));
+    if (row < this.rows - 1) neighbors.push(this.getTile(row+1, col));
+    if (col > 0) neighbors.push(this.getTile(row, col-1));
+    if (col < this.cols - 1) neighbors.push(this.getTile(row, col+1));
+    return neighbors;
+  }
+  
+  getTile(r, c) {
+    return this.tiles[r * this.cols + c];
+  }
+
+  openTile(tile) {
+    tile.opened = true;
+    if (tile.category === Category.SPECIAL) this.goldsFound++;
+  }
+}
+
+class BruteforceProbabilitySolver {
+  constructor(grid) {
+    this.grid = grid;
+
+    const numTiles = grid.tilesList.length;
+    this.possibleConfigurations = this.getPossibleConfigurations(4, numTiles);
+    this.possibleConfigurationsRemaining = this.possibleConfigurations.length;
+    this.configurationsPerGoldTile = new Array(numTiles).fill(0);
+    this.configurationsPerGoldHintTile = new Array(numTiles).fill(0);
+
+    this.neighborsIndex = new Array(numTiles);
+    for (let i = 0; i < numTiles; i++) {
+      let tile = grid.tilesList[i];
+      this.neighborsIndex[i] = grid.getNeighbors(tile).map(nt => this.getTileIndex(nt));
+    }
+
+    this.remainingConfigurationsAfterOpenEstimate = new Array(numTiles).fill(0);
+  }
+
+  getTileIndex(tile) {
+    return tile.col + tile.row * this.grid.cols;
+  }
+
+  getPossibleConfigurations(golds, numTiles) {
+    let combos = [];
+    for (let p1 = 0; p1 < numTiles; p1++) {
+      for (let p2 = p1+1; p2 < numTiles; p2++) {
+        for (let p3 = p2+1; p3 < numTiles; p3++) {
+          for (let p4 = p3+1; p4 < numTiles; p4++) {
+            let configuration = (p1) | (p2 << 8) | (p3 << 16) | (p4 << 24);
+            combos.push(configuration);
+          }
+        }
+      }
+    }
+    return combos;
+  }
+
+  isGoldTileInConfiguration(configuration, tileIndex) {
+    return ((configuration & 0xFF) === tileIndex
+      || ((configuration >> 8) & 0xFF) === tileIndex
+      || ((configuration >> 16) & 0xFF) === tileIndex
+      || ((configuration >> 24) & 0xFF) === tileIndex);
+  }
+
+  removePossibleConfiguration(i) {
+    this.possibleConfigurations[i] = this.possibleConfigurations[--this.possibleConfigurationsRemaining];
+  }
+
+  updatePossibleConfigurations() {
+    this.possibleConfigurations = this.getPossibleConfigurations(4, this.grid.tilesList.length);
+    this.possibleConfigurationsRemaining = this.possibleConfigurations.length;
+
+    for (let tile of this.grid.tilesList) {
+      if (tile.opened) {
+        this.narrowDownPossibleConfigurations(tile);
+      }
+    }
+  }
+
+  narrowDownPossibleConfigurations(openTile) {
+    let isGold = (openTile.category === Category.SPECIAL);
+    let isGoldHint = (openTile.neighborHint === "Special");
+    let tileIndex = this.getTileIndex(openTile);
+
+    let i = 0;
+    while (i < this.possibleConfigurationsRemaining) {
+      let configuration = this.possibleConfigurations[i];
+      if (isGold !== this.isGoldTileInConfiguration(configuration, tileIndex)) {
+        this.removePossibleConfiguration(i);
+        continue;
+      }
+
+      if (isGoldHint) {
+        if (!this.hasGoldNeighbors(tileIndex, configuration)) {
+          this.removePossibleConfiguration(i);
+          continue;
+        }
+      } else {
+        let remove = false;
+        for (let neighborTileIndex of this.neighborsIndex[tileIndex]) {
+          if (this.isGoldTileInConfiguration(configuration, neighborTileIndex)) {
+            remove = true; break;
+          }
+        }
+        if (remove) {
+          this.removePossibleConfiguration(i);
+          continue;
+        }
+      }
+      i++;
+    }
+  }
+
+  hasGoldNeighbors(tileIndex, configuration) {
+    for (let neighborTileIndex of this.neighborsIndex[tileIndex]) {
+      if (this.isGoldTileInConfiguration(configuration, neighborTileIndex)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  updateProbabilities() {
+    this.configurationsPerGoldTile.fill(0);
+    this.configurationsPerGoldHintTile.fill(0);
+
+    for (let i = 0; i < this.possibleConfigurationsRemaining; i++) {
+      let configuration = this.possibleConfigurations[i];
+      let goldIndices = [
+        (configuration & 0xFF),
+        ((configuration >> 8) & 0xFF),
+        ((configuration >> 16) & 0xFF),
+        ((configuration >> 24) & 0xFF)
+      ];
+
+      let goldHintBits = 0n;
+      for (let gi of goldIndices) {
+        this.configurationsPerGoldTile[gi]++;
+        for (let neighborTileIndex of this.neighborsIndex[gi]) {
+          goldHintBits |= (1n << BigInt(neighborTileIndex));
+        }
+      }
+
+      for (let neighborTileIndex = 0; neighborTileIndex < this.grid.tilesList.length; neighborTileIndex++) {
+        if ((goldHintBits & (1n << BigInt(neighborTileIndex))) !== 0n) {
+          this.configurationsPerGoldHintTile[neighborTileIndex]++;
+        }
+      }
+    }
+  }
+
+  updateRemainingConfigurationsAfterOpenEstimate() {
+    for (let tile of this.grid.tilesList) {
+      let tileIndex = this.getTileIndex(tile);
+      this.remainingConfigurationsAfterOpenEstimate[tileIndex] = this.calcRemainingConfigurationsAfterOpenEstimate(tile);
+    }
+  }
+
+  calcRemainingConfigurationsAfterOpenEstimate(openTile) {
+    let tileIndex = this.getTileIndex(openTile);
+    let goldProbability = this.configurationsPerGoldTile[tileIndex] / this.possibleConfigurationsRemaining;
+    let goldHintProbability = this.configurationsPerGoldHintTile[tileIndex] / this.possibleConfigurationsRemaining;
+
+    let weightedAverage = 0.0;
+    weightedAverage += this.getPossibleConfigurationsAfterOpen(openTile, false, false) * (1.0 - goldProbability) * (1.0 - goldHintProbability);
+    weightedAverage += this.getPossibleConfigurationsAfterOpen(openTile, false, true) * (1.0 - goldProbability) * (goldHintProbability);
+    weightedAverage += this.getPossibleConfigurationsAfterOpen(openTile, true, false) * (goldProbability) * (1.0 - goldHintProbability);
+    weightedAverage += this.getPossibleConfigurationsAfterOpen(openTile, true, true) * (goldProbability) * (goldHintProbability);
+    return weightedAverage;
+  }
+
+  getPossibleConfigurationsAfterOpen(openTile, isGold, isGoldHint) {
+    let tileIndex = this.getTileIndex(openTile);
+    let remainingConfigurations = 0;
+    for (let i = 0; i < this.possibleConfigurationsRemaining; i++) {
+      let configuration = this.possibleConfigurations[i];
+      if (isGold !== this.isGoldTileInConfiguration(configuration, tileIndex)) continue;
+      if (isGoldHint) {
+        if (!this.hasGoldNeighbors(tileIndex, configuration)) continue;
+      } else {
+        let skip = false;
+        for (let neighborTileIndex of this.neighborsIndex[tileIndex]) {
+          if (this.isGoldTileInConfiguration(configuration, neighborTileIndex)) {
+            skip = true; break;
+          }
+        }
+        if (skip) continue;
+      }
+      remainingConfigurations++;
+    }
+    return remainingConfigurations;
+  }
+
+  getTilePriority(tile) {
+    let tileIndex = this.getTileIndex(tile);
+    let goldProbability = this.configurationsPerGoldTile[tileIndex] / this.possibleConfigurationsRemaining;
+    let excludedConfigurationsShare = 1.0 - this.remainingConfigurationsAfterOpenEstimate[tileIndex] / this.possibleConfigurationsRemaining;
+    return 1.0 - Math.pow(1.0 - goldProbability, 1.0) * Math.pow(1.0 - excludedConfigurationsShare, 2.0);
+  }
+
+  getNextTileToOpen() {
+    let unopenedTiles = this.grid.tilesList.filter(t => !t.opened);
+    if (unopenedTiles.length === 0) return null;
+    unopenedTiles.sort((a,b) => this.getTilePriority(b) - this.getTilePriority(a));
+    return unopenedTiles[0];
+  }
+}
+
+// -------------------- Integrating Solver with UI --------------------
+
+function openPanel(r, c) {
+  currentEdit = {r, c};
+  panel.classList.remove('hidden');
+  panelTile.textContent = `Row: ${r+1}, Col: ${c+1}`;
+
+  const valGold = panel.querySelector('input[name="value"][value="gold"]');
+  const valCommon = panel.querySelector('input[name="value"][value="common"]');
+  const hintSpecial = panel.querySelector('input[name="hint"][value="special"]');
+  const hintCommon = panel.querySelector('input[name="hint"][value="common"]');
+
+  const d = tileData[r][c];
+  if (d.value === 'gold') {
+    valGold.checked = true;
+  } else {
+    valCommon.checked = true;
+  }
+
+  if (d.hint === 'special') {
+    hintSpecial.checked = true;
+  } else {
+    hintCommon.checked = true;
+  }
+}
+
+function saveTileInfo() {
+  if (!currentEdit) return;
+  const r = currentEdit.r;
+  const c = currentEdit.c;
+  const val = panel.querySelector('input[name="value"]:checked').value;
+  const hint = panel.querySelector('input[name="hint"]:checked').value;
+
+  tileData[r][c].opened = true;
+  tileData[r][c].value = val;
+  tileData[r][c].hint = hint;
+
+  updateTileUI(r, c);
+  panel.classList.add('hidden');
+  currentEdit = null;
+  runSolverAndSuggest();
+}
+
+function closePanelWithoutSaving() {
+  panel.classList.add('hidden');
+  currentEdit = null;
+}
+
+function updateTileUI(r,c) {
+  const idx = r * cols + c;
+  const tileEl = boardEl.children[idx];
+  tileEl.classList.add('opened');
+  if (tileData[r][c].value === 'gold') {
+    tileEl.textContent = 'G';
+    tileEl.classList.add('gold');
+  } else {
+    tileEl.textContent = 'C';
+    tileEl.classList.remove('gold');
+  }
+
+  const oldIcon = tileEl.querySelector('.hint-icon');
+  if (oldIcon) oldIcon.remove();
+
+  if (tileData[r][c].hint === 'special') {
+    const icon = document.createElement('span');
+    icon.className = 'hint-icon';
+    icon.textContent = '?';
+    tileEl.appendChild(icon);
+  }
+}
+
+function clearSuggestions() {
+  for (let i = 0; i < boardEl.children.length; i++) {
+    boardEl.children[i].classList.remove('suggested');
+  }
+}
+
+function runSolverAndSuggest() {
+  let g = new Grid(rows, cols, totalGold);
+  g.initFromTileData(tileData);
+
+  const infoEl = document.getElementById('info');
+
+  if (g.goldsFound >= totalGold) {
+    infoEl.textContent = "All gold tiles found!";
+    clearSuggestions();
+    return;
+  }
+
+  let solver = new BruteforceProbabilitySolver(g);
+  solver.updatePossibleConfigurations();
+  solver.updateProbabilities();
+  solver.updateRemainingConfigurationsAfterOpenEstimate();
+
+  let nextTile = solver.getNextTileToOpen();
+  showSuggestion(nextTile);
+}
+
+function showSuggestion(nextTile) {
+  clearSuggestions();
+  const infoEl = document.getElementById('info');
+  if (!nextTile) {
+    infoEl.textContent = "No more suggestions.";
+    return;
+  }
+  const idx = nextTile.row * cols + nextTile.col;
+  boardEl.children[idx].classList.add('suggested');
+  infoEl.textContent = `Suggested tile to open next: Row ${nextTile.row+1}, Col ${nextTile.col+1}`;
+}
+
+function resetGame() {
+  initializeTileData();
+  buildBoardUI();
+  panel.classList.add('hidden');
+  currentEdit = null;
+  runSolverAndSuggest();
+}
+
+// Initial suggestion
+runSolverAndSuggest();
+
+</script>
+</body>
+</html>
